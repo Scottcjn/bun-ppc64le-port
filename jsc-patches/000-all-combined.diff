@@ -1,0 +1,98 @@
+diff --git a/Source/JavaScriptCore/bytecode/ArithProfile.h b/Source/JavaScriptCore/bytecode/ArithProfile.h
+index 7cd0e8550f..1b87a86331 100644
+--- a/Source/JavaScriptCore/bytecode/ArithProfile.h
++++ b/Source/JavaScriptCore/bytecode/ArithProfile.h
+@@ -33,6 +33,7 @@
+ namespace JSC {
+ 
+ class CCallHelpers;
++class LLIntOffsetsExtractor;
+ 
+ struct ObservedType {
+     constexpr ObservedType(uint8_t bits = TypeEmpty)
+@@ -179,6 +180,8 @@ protected:
+     void setBit(int mask) { m_bits |= mask; }
+ 
+     BitfieldType m_bits { 0 }; // We take care to update m_bits only in a single operation. We don't ever store an inconsistent bit representation to it.
++
++    friend class JSC::LLIntOffsetsExtractor;
+ };
+ 
+ #if ENABLE(JIT)
+diff --git a/Source/JavaScriptCore/dfg/DFGAbstractHeap.h b/Source/JavaScriptCore/dfg/DFGAbstractHeap.h
+index 2e5cf7fa88..5f7d6196bd 100644
+--- a/Source/JavaScriptCore/dfg/DFGAbstractHeap.h
++++ b/Source/JavaScriptCore/dfg/DFGAbstractHeap.h
+@@ -25,13 +25,9 @@
+ 
+ #pragma once
+ 
+-#if ENABLE(DFG_JIT)
+-
+-#include "DOMJITHeapRange.h"
+-#include "OperandsInlines.h"
+-#include "VirtualRegister.h"
+-#include <wtf/HashMap.h>
+-#include <wtf/PrintStream.h>
++// AbstractHeapKind is referenced by DOMJITEffect.h, which compiles
++// unconditionally. Expose the enum + macro even when DFG_JIT is off.
++// The heavier AbstractHeap class below stays guarded.
+ 
+ namespace JSC { namespace DFG {
+ 
+@@ -99,6 +95,18 @@ enum AbstractHeapKind : uint8_t {
+ #undef ABSTRACT_HEAP_DECLARATION
+ };
+ 
++} } // namespace JSC::DFG
++
++#if ENABLE(DFG_JIT)
++
++#include "DOMJITHeapRange.h"
++#include "OperandsInlines.h"
++#include "VirtualRegister.h"
++#include <wtf/HashMap.h>
++#include <wtf/PrintStream.h>
++
++namespace JSC { namespace DFG {
++
+ class AbstractHeap {
+ public:
+     class Payload {
+diff --git a/Source/JavaScriptCore/heap/Heap.cpp b/Source/JavaScriptCore/heap/Heap.cpp
+index 34bf9be2b6..8b033b6036 100644
+--- a/Source/JavaScriptCore/heap/Heap.cpp
++++ b/Source/JavaScriptCore/heap/Heap.cpp
+@@ -95,6 +95,7 @@
+ #include <wtf/ListDump.h>
+ #include <wtf/MemoryFootprint.h>
+ #include <wtf/RAMSize.h>
++#include <wtf/SetForScope.h>
+ #include <wtf/Scope.h>
+ #include <wtf/SimpleStats.h>
+ #include <wtf/SystemTracing.h>
+diff --git a/Source/JavaScriptCore/offlineasm/cloop.rb b/Source/JavaScriptCore/offlineasm/cloop.rb
+index 3af22959a2..d8dce4a5cd 100644
+--- a/Source/JavaScriptCore/offlineasm/cloop.rb
++++ b/Source/JavaScriptCore/offlineasm/cloop.rb
+@@ -1183,7 +1183,7 @@ class Instruction
+         when "cloopCallNative"
+             $asm.putc "cloopStack.setCurrentStackPointer(sp.vp());"
+             $asm.putc "nativeFunc = #{operands[0].clValue(:nativeFunc)};"
+-            $asm.putc "functionReturnValue = JSValue::decode(nativeFunc(jsCast<JSGlobalObject*>(t0.cell()), t1.callFrame()));"
++            $asm.putc "functionReturnValue = JSValue::decode(nativeFunc(uncheckedDowncast<JSGlobalObject>(t0.cell()), t1.callFrame()));"
+             $asm.putc "#if USE(JSVALUE32_64)"
+             $asm.putc "    t1 = functionReturnValue.tag();"
+             $asm.putc "    t0 = functionReturnValue.payload();"
+diff --git a/Source/JavaScriptCore/runtime/DeferredWorkTimer.cpp b/Source/JavaScriptCore/runtime/DeferredWorkTimer.cpp
+index 778c1983a0..79aa096a7c 100644
+--- a/Source/JavaScriptCore/runtime/DeferredWorkTimer.cpp
++++ b/Source/JavaScriptCore/runtime/DeferredWorkTimer.cpp
+@@ -32,6 +32,7 @@
+ #include "TopExceptionScope.h"
+ #include "VM.h"
+ #include <wtf/RunLoop.h>
++#include <wtf/SetForScope.h>
+ #include <wtf/Scope.h>
+ #include <wtf/TZoneMallocInlines.h>
+ 

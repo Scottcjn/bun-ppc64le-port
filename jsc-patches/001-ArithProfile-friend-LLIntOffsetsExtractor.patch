@@ -1,0 +1,30 @@
+# Patch: Add friend class declaration to base ArithProfile for LLIntOffsetsExtractor
+#
+# Clang 18+ enforces access control stricter than GCC. UnaryArithProfile and
+# BinaryArithProfile subclasses declare `friend class JSC::LLIntOffsetsExtractor`,
+# but the inherited `m_bits` field lives in the base `ArithProfile<BitfieldType>`
+# class which has no friend declaration. Friendship does not inherit in C++.
+#
+# This causes LLIntOffsetsExtractor.cpp to fail:
+#   error: 'm_bits' is a protected member of 'JSC::ArithProfile<unsigned short>'
+#   OFFLINE_ASM_OFFSETOF(BinaryArithProfile, m_bits),
+#   OFFLINE_ASM_OFFSETOF(UnaryArithProfile, m_bits),
+#
+# The fix adds `friend class JSC::LLIntOffsetsExtractor;` to the base ArithProfile
+# class so the generated offset-extractor table can reach the inherited m_bits.
+#
+# Applies to: Source/JavaScriptCore/bytecode/ArithProfile.h
+# Upstream: file as WebKit bug + bugs.webkit.org ticket
+# Affects: any build with clang-18+ (ppc64le CLOOP triggered this first, but
+#          same bug on x86_64/aarch64 clang-18 with -stdlib=libc++)
+
+--- a/Source/JavaScriptCore/bytecode/ArithProfile.h
++++ b/Source/JavaScriptCore/bytecode/ArithProfile.h
+@@ -181,6 +181,8 @@
+     BitfieldType m_bits { 0 }; // We take care to update m_bits only in a single operation.
+                                // We don't ever store an inconsistent bit representation to it.
++
++    friend class JSC::LLIntOffsetsExtractor;
+ };
+ 
+ #if ENABLE(JIT)

@@ -1,0 +1,68 @@
+# Patch: Add ppc64le to Bun's Arch type + Config
+#
+# Extends Arch union from ("x64" | "aarch64") to ("x64" | "aarch64" | "ppc64le")
+# and adds corresponding ppc64le boolean to Config. Host detection accepts
+# Node.js's "ppc64" arch name (Node reports ppc64 on Linux ppc64le).
+#
+# Does NOT change any default behavior for x64/aarch64 hosts. Only adds a new
+# valid value.
+#
+# Paired with:
+#  - bun-patches/002-webkit-ts-local-mode-on-ppc64le.patch (force CLOOP build)
+#  - bun-patches/003-flags-ts-ppc64le-cpu-target.patch (emit -mcpu=power8)
+#  - build.zig patches for Zig target table (separate file)
+
+--- a/scripts/build/config.ts
++++ b/scripts/build/config.ts
+@@ -18,7 +18,7 @@
+ // ───────────────────────────────────────────────────────────────────────────
+
+ export type OS = "linux" | "darwin" | "windows";
+-export type Arch = "x64" | "aarch64";
++export type Arch = "x64" | "aarch64" | "ppc64le";
+ export type Abi = "gnu" | "musl";
+ export type BuildType = "Debug" | "Release" | "MinSizeRel" | "RelWithDebInfo";
+
+@@ -75,6 +75,8 @@
+   unix: boolean;
+   x64: boolean;
+   arm64: boolean;
++  /** PowerPC 64-bit Little-Endian (POWER8+). Interpreter-only — no JIT. */
++  ppc64le: boolean;
+
+   /**
+    * What's running the build. Differs from os/arch/windows (target) in
+@@ -320,8 +322,11 @@
+     a === "x64"
+       ? "x64"
+       : a === "arm64"
+         ? "aarch64"
+-        : (() => {
+-            throw new BuildError(`Unsupported host architecture: ${a}`, { hint: "Bun builds on x64 or arm64" });
+-          })();
++        : a === "ppc64"
++          ? "ppc64le"
++          : (() => {
++              throw new BuildError(`Unsupported host architecture: ${a}`, {
++                hint: "Bun builds on x64, arm64, or ppc64le",
++              });
++            })();
+
+   return { os, arch, exeSuffix: os === "windows" ? ".exe" : "" };
+@@ -358,6 +363,7 @@
+   const windows = os === "windows";
+   const unix = linux || darwin;
+   const x64 = arch === "x64";
+   const arm64 = arch === "aarch64";
++  const ppc64le = arch === "ppc64le";
+
+   // Platform file conventions — MSVC style on Windows, Unix everywhere else.
+   const exeSuffix = windows ? ".exe" : "";
+@@ -500,6 +506,7 @@
+     unix,
+     x64,
+     arm64,
++    ppc64le,
+     host,
+     exeSuffix,
+     objSuffix,

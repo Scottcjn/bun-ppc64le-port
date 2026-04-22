@@ -1,0 +1,263 @@
+# Bun ppc64le Port — Progress Log
+
+## 2026-04-22 (session 1)
+
+### Toolchain
+- ✅ libc++-18 installed (resolves C++23 `<expected>` on Ubuntu 20.04 ppc64el)
+- ✅ clang-18 + clang++-18 as compiler
+- 🔄 ICU 72 building from source (~15-20 min); Ubuntu 20.04 apt caps at ICU 66.1
+- Ruby 2.7 installed for offlineasm
+
+### JSC CLOOP build
+Status: **CONFIGURES AND PARTIALLY COMPILES ON PPC64LE**
+
+Cleanly configured with:
+```
+-DPORT=JSCOnly -DENABLE_C_LOOP=ON -DENABLE_JIT=OFF
+-DCMAKE_CXX_COMPILER=clang++-18 -DCMAKE_CXX_FLAGS="-stdlib=libc++"
+```
+
+Build progress:
+- Build 1 (scalar libstdc++): 651/2733 → failed on `<expected>`
+- Build 2 (libc++): 1971/2284 → failed on `m_bits` access
+- Build 3 (public hack): 2/314 → failed on qualified friend lookup
+- Build 4 (m_bits revert + forward decl): 5/317 → failed on `jsCast` (removed API)
+- Build 5 (cloop.rb jsCast→uncheckedDowncast): 234/317 → failed on SetForScope
+- Build 6 (pending): ICU 72 + final patches
+
+### Patches applied (all upstream-landable)
+
+1. `jsc-patches/001-ArithProfile-friend-LLIntOffsetsExtractor.patch`
+   - Adds `friend class JSC::LLIntOffsetsExtractor;` to base ArithProfile
+   - Adds forward-decl `class LLIntOffsetsExtractor;` in namespace JSC
+   - Root cause: clang-18 strict about qualified friend lookup
+
+2. `jsc-patches/002-cloop-rb-jsCast-to-uncheckedDowncast.patch`
+   - cloop.rb:1186 emits modern `uncheckedDowncast<JSGlobalObject>()` instead
+     of removed `jsCast<JSGlobalObject*>()`
+   - Affects ANY CLOOP build with modern WebKit (not ppc64le-specific)
+
+3. `jsc-patches/003-heap-cpp-SetForScope-include.patch`
+   - Heap.cpp:3341 direct use of SetForScope needs direct `<wtf/SetForScope.h>`
+
+4. `jsc-patches/004-DeferredWorkTimer-SetForScope-include.patch`
+   - Same class as 003 for DeferredWorkTimer.cpp:145
+
+### Key realization
+**NONE of the patches so far are ppc64le-specific.** They're all clang-18 + libc++
+hygiene fixes that affect any JSCOnly CLOOP build on modern distros. This means:
+- Fixes are cheap to land upstream
+- Benefits any platform using CLOOP
+- Real ppc64le work (MachineContext.h mcontext case) hasn't been reached yet
+- Build is proving JSC's arch-agnostic codepath actually works on ppc64le
+
+### Next
+1. ICU 72 build completes → reconfigure JSC with `-DICU_ROOT=/opt/icu-72`
+2. Resume ninja build → hopefully hit MachineContext.h ppc64le gap next
+3. Patch MachineContext.h with ppc64le Linux mcontext case
+4. Complete libJavaScriptCore.a static lib
+5. Build `jsc` REPL binary, test `console.log(2+2)` → 4
+
+## 2026-04-22 (session 1 — continued)
+
+### 🎊 GATE 2 CLEARED — JSC RUNS ON PPC64LE
+
+Build 8 with ICU 72: **502/502 targets, 0 failures**.
+
+Artifacts:
+- `lib/libJavaScriptCore.a` — 2.3 MB static library
+- `bin/jsc` — 19.7 MB ELF64 LSB PowerPC REPL binary
+
+JSC execution verified on POWER8 S824:
+```
+$ jsc -e 'print(2+2)' → 4
+$ jsc -e 'print("Hello from JSC on POWER8 ppc64le")' → Hello ...
+$ jsc -e 'fib(20)' → 6765
+```
+
+Full ES6+ semantics verified:
+- Classes, destructuring, rest spread
+- Generators (`function*`, `yield`)
+- Map, Set, Symbol.iterator
+- Template literals, Promise.resolve
+- for...of over generator over linked list
+
+### Codex prediction vs reality
+Codex audit flagged `MachineContext.h:192-204,311-324,471-483` as "real source-level
+PPC64LE gap" needing ~100 LOC mcontext case. **We didn't hit it.** The #error sites
+are inside `ENABLE_JIT`/`ENABLE_DFG_JIT`/`ENABLE_FTL_JIT` guarded regions, which are
+compiled out in CLOOP mode. CLOOP doesn't use signal-based preemption so
+mcontext_t inspection is unreachable.
+
+This is a GOOD surprise — the CLOOP path is genuinely architecture-agnostic, and
+the WebKit WTF ppc64le scaffolding (PageBlock 64KiB, PlatformCPU.h, etc.) was
+sufficient.
+
+### Final patch set (4 patches, all upstream-landable)
+- `001-ArithProfile-friend-LLIntOffsetsExtractor.patch` — clang-18 qualified friend
+- `002-cloop-rb-jsCast-to-uncheckedDowncast.patch` — removed-API fix
+- `003-heap-cpp-SetForScope-include.patch` — missing include hygiene
+- `004-DeferredWorkTimer-SetForScope-include.patch` — same class as 003
+
+**None are ppc64le-specific.** All help any clang-18 + libc++ JSCOnly CLOOP build.
+
+### Binary properties (jsc on POWER8)
+```
+ELF 64-bit LSB shared object, 64-bit PowerPC (LE), dynamically linked
+deps: libicu*.so.72 (our build), libc++.so.1, libatomic.so.1, libunwind.so.1
+```
+
+### Next (Bun side)
+- Gate 3 — teach Bun's `scripts/build/deps/webkit.ts` to accept a local JSC
+  build at `/opt/jsc-ppc64le` instead of its hard-coded amd64/arm64 tarball map
+- Gate 4 — cross-compile Bun from x86 host or native build on POWER8
+- Gate 5 — `bun --version`
+- Gate 6 — `bun run` a script
+- Gate 7 — Claude Code runs
+
+## 2026-04-22 (session 1 — Gate 2.5)
+
+### 🎊 OVEN-SH/WEBKIT FORK BUILDS ON PPC64LE WITH FULL BUN FLAGS
+
+After upstream JSC CLOOP proved the path, moved to oven-sh/WebKit fork at Bun's
+pinned commit `4d5e75ebd84a14edbc7ae264245dcd77fe597c10`.
+
+Findings:
+- Same 4 patches from upstream apply cleanly to oven-sh fork (bugs unfixed)
+- Fork needs one NEW patch: **DFGAbstractHeap.h** — split `AbstractHeapKind` enum
+  out of `#if ENABLE(DFG_JIT)` guard because DOMJITEffect.h (compiled
+  unconditionally) references it. This is NOT ppc64le-specific — affects
+  any ENABLE_DFG_JIT=OFF build.
+- All Bun-specific cmake flags accepted on ppc64le:
+  - USE_BUN_JSC_ADDITIONS=ON
+  - USE_BUN_EVENT_LOOP=ON
+  - ENABLE_BUN_SKIP_FAILING_ASSERTIONS=ON
+  - ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS=ON
+  - ENABLE_REMOTE_INSPECTOR=ON
+
+Build artifacts at `/opt/bun-webkit-ppc64le/`:
+- `lib/libJavaScriptCore.a` — 38.4 MB (Bun additions baked in)
+- `lib/libWTF.a` — 3.6 MB
+- `lib/libbmalloc.a` — 179 KB
+- `bin/jsc` — 18.3 MB (Bun-flags JSC REPL)
+- `JavaScriptCore/` + `WTF/` headers + derived sources
+
+ES2022+ verified: async generators with `for await...of` ✅
+
+### Full patch set: 5 JSC patches (all upstream-landable)
+
+At `/home/scott/bun-ppc64le-port/jsc-patches/`:
+1. `001-ArithProfile-friend-LLIntOffsetsExtractor.patch`
+2. `002-cloop-rb-jsCast-to-uncheckedDowncast.patch`
+3. `003-heap-cpp-SetForScope-include.patch`
+4. `004-DeferredWorkTimer-SetForScope-include.patch`
+5. `005-DFGAbstractHeap-split-enum.patch` — NEW: enum out of DFG_JIT guard
+
+### 4 Bun patches drafted + type-check clean
+
+At `/home/scott/bun-ppc64le-port/bun-patches/`:
+1. `001-add-ppc64le-arch.patch` — Arch type union + Config.ppc64le bool
+2. `002-webkit-ts-ppc64le-local-cloop.patch` — local mode + CLOOP force
+3. `003-flags-ts-ppc64le-cpu-target.patch` — `-mcpu=power8` CPU flag
+4. `004-src-env-zig-ppc64le.patch` — Zig Architecture enum + names
+
+### Remaining gates
+
+- **Gate 3** — Wire Bun's build to find `/opt/bun-webkit-ppc64le/`
+  - Set `BUN_WEBKIT_PATH=/opt/bun-webkit-ppc64le`? Problem: Bun still runs cmake
+    on it. Need to either (a) pre-install webkit into Bun's expected cache layout
+    or (b) short-circuit the local build step when `BUN_WEBKIT_PREBUILT_PATH` is set
+- **Gate 4** — Bun compile (Zig + C++ linking against our libJSC.a)
+- **Gate 5-7** — `bun --version`, `bun run`, Claude Code
+
+## 2026-04-22 (session 2) — Gate 4 kickoff
+
+Scott committed to Option A (native Bun via proper toolchain) with Codex assist.
+
+### Codex's research finding (ziglang/zig#24568 + zig-bootstrap)
+
+**Native POWER8 Zig build is CONFIRMED BROKEN** — stage3 segfaults on startup
+due to LLD ppc64le codegen emitting invalid branch relocations. Not fixable
+from our side in reasonable time.
+
+**Working path: `zig-bootstrap` cross-compile from x86 host targeting
+`powerpc64le-linux-musl`** (MUST be musl — glibc target also broken at LLD
+missing relocs 31/60/119).
+
+### Parallel builds kicked off
+
+**POWER8** (100.75.100.89): LLVM 21.1.4 source (llvmorg-21.1.4) building
+clang + lld via clang-18. Needed because Bun's build system requires clang-21
+specifically. Build dir: `/tmp/llvm21/llvm-project-llvmorg-21.1.4/build`.
+Install target: `/opt/llvm-21`. Expected ~2-4 hours on 32 threads.
+
+**Laptop x86**: zig-bootstrap with oven-sh/zig pinned commit
+`0bcf4c3d998133e724d27e9fd783172ffed4c943` (2026-04-20), target
+`powerpc64le-linux-musl` mcpu=power8. Build dir:
+`/home/scott/bun-ppc64le-port/zig-cross/zig-bootstrap/`. Expected ~2-4 hours
+on 16 threads (builds LLVM 3x — host, cross-lib, target).
+
+### Why both?
+
+zig-bootstrap produces a static ppc64le-musl `zig` binary we scp to POWER8.
+But we still need clang-21 on POWER8 for Bun's own C++ compilation step —
+Bun's build system rejects clang-20/18 at configure time with a hard version
+check (>=21.1.0 <21.1.99).
+
+### Next gates when builds complete
+- Gate 3a: scp `out/zig-powerpc64le-linux-musl-power8/` → POWER8 ~/zig-bun/
+- Gate 3b: install /opt/llvm-21 on POWER8 with clang-21
+- Gate 4a: run `bun scripts/build.ts` on POWER8 pointing BUN_WEBKIT_PATH at
+  our `/opt/bun-webkit-ppc64le` and PATH at `/opt/llvm-21/bin`
+- Gate 4b: first Bun compile attempt — expect new patch onion layers
+
+## 2026-04-22 (session 3) — Gate 3/4a breakthroughs
+
+### 🎊 ALL PPC64LE TOOLCHAIN READY ON POWER8
+
+**Zig** — Surprise win: `ziglang.org` publishes official prebuilt ppc64le-linux tarballs.
+Downloaded `zig-powerpc64le-linux-0.16.0.tar.xz`, installed to `/opt/zig/`, verified:
+- `zig version` → 0.16.0
+- Compiles + runs native ppc64le ELF executables (fib(25) = 75025)
+
+NO bootstrap needed. Codex's zig-bootstrap advice was valid but superseded by
+official binaries. POWER8 stage3 CRASH bug is about self-host BUILD only, not
+about RUNNING official builds.
+
+**Clang-21** — Built from source on POWER8 via clang-18.
+- LLVM 21.1.4 clang + lld built in ~45 min (32 threads)
+- Installed to `/opt/llvm-21/bin/clang-21` and `/opt/llvm-21/bin/ld.lld`
+- Target: `powerpc64le-unknown-linux-gnu`
+
+### Full toolchain status on POWER8
+
+| Tool | Version | Path |
+|------|---------|------|
+| clang | 21.1.4 | /opt/llvm-21/bin/clang-21 |
+| ld.lld | 21.1.4 | /opt/llvm-21/bin/ld.lld |
+| libc++ | 18.1.8 | apt |
+| ICU | 72.1 | /opt/icu-72 |
+| zig | 0.16.0 | /opt/zig/zig |
+| libJavaScriptCore.a | Bun's fork | /opt/bun-webkit-ppc64le |
+| node | 22.22.2 | /home/sophia/bin/node |
+
+### Gate 4a blocker: Bun's build system needs bun binary
+
+Running `node --experimental-strip-types scripts/build.ts --arch=ppc64le` on
+POWER8 reached the codegen step and errored: "Codegen requires bun". Bun's
+official install script has no ppc64le target (only amd64/arm64).
+
+**Chicken-and-egg**: need bun to build bun.
+
+Next options for Gate 4a:
+1. Run codegen on x86 laptop (has bun), rsync generated files to POWER8
+2. Build clang-21 on x86 laptop, then cross-compile bun x86→ppc64le
+3. Find/build a pre-codegen node-only path through the build system
+4. Install oven-sh/bun from npm on POWER8 (may or may not have native build)
+
+### Bun source on POWER8
+At `~/bun-ppc64le/` (179 MB). Has all 4 Bun-side patches applied.
+
+### Cleanup
+Removed `zig-cross/` (zig-bootstrap attempt that failed on stock zig2 stage3).
+Kept `zig-host-x86/zig-powerpc64le-linux-0.16.0.tar.xz` as the working distribution.

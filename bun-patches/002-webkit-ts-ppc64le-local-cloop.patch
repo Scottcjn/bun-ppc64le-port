@@ -1,0 +1,65 @@
+# Patch: webkit.ts — force local CLOOP build on ppc64le
+#
+# ppc64le has no prebuilt tarball in oven-sh/WebKit releases (those are
+# amd64/arm64 only). On ppc64le, bun should always use local mode AND
+# override Bun's default ENABLE_FTL_JIT=ON with ENABLE_C_LOOP=ON +
+# ENABLE_JIT=OFF because JSC has no JIT/FTL backend for PowerPC.
+#
+# These overrides apply only when arch is ppc64le. x64/arm64 builds are
+# unchanged — same tarball URL logic, same local-cmake flags.
+#
+# Paired with 001-add-ppc64le-arch.patch which adds cfg.ppc64le.
+
+--- a/scripts/build/deps/webkit.ts
++++ b/scripts/build/deps/webkit.ts
+@@ -70,8 +70,10 @@
+ function prebuiltUrl(cfg: Config): string {
+   const os = cfg.windows ? "windows" : cfg.darwin ? "macos" : "linux";
+-  const arch = cfg.arm64 ? "arm64" : "amd64";
++  const arch = cfg.arm64 ? "arm64" : cfg.ppc64le ? "ppc64le" : "amd64";
+   const name = `bun-webkit-${os}-${arch}${prebuiltSuffix(cfg)}`;
+   const version = cfg.webkitVersion;
+   const tag = version.startsWith("autobuild-") ? version : `autobuild-${version}`;
+   return `https://github.com/oven-sh/WebKit/releases/download/${tag}/${name}.tar.gz`;
+ }
+
+@@ -170,6 +172,12 @@
+
+   source: cfg => {
+     if (cfg.webkit === "prebuilt") {
++      // ppc64le: oven-sh/WebKit releases don't publish ppc64le tarballs.
++      // Fall through to local mode transparently — user still has to clone
++      // WebKit, but they don't need to pass --webkit=local explicitly.
++      if (cfg.ppc64le) {
++        // fall through to local mode below
++      } else {
+       const src: Source = {
+         kind: "prebuilt",
+         url: prebuiltUrl(cfg),
+@@ -187,6 +195,7 @@
+         src.rmAfterExtract = ["include/unicode"];
+       }
+       return src;
++      }
+     }
+
+     // Local: user clones manually ...
+@@ -240,10 +249,17 @@
+       PORT: "JSCOnly",
+       ENABLE_STATIC_JSC: "ON",
+       USE_THIN_ARCHIVES: "OFF",
+-      ENABLE_FTL_JIT: "ON",
++      // ppc64le: no JIT/FTL backend in JSC for PowerPC. Force CLOOP
++      // interpreter mode. Upstream WebKit's WebKitFeatures.cmake already
++      // defaults non-x86/ARM/RISCV to C_LOOP=ON, but Bun's cmake set
++      // explicitly overrides that default — we have to match here.
++      ENABLE_FTL_JIT: cfg.ppc64le ? "OFF" : "ON",
++      ...(cfg.ppc64le ? {
++        ENABLE_JIT: "OFF",
++        ENABLE_DFG_JIT: "OFF",
++        ENABLE_C_LOOP: "ON",
++        ENABLE_WEBASSEMBLY: "OFF",
++      } : {}),
+       CMAKE_EXPORT_COMPILE_COMMANDS: "ON",
+       USE_BUN_JSC_ADDITIONS: "ON",
+       USE_BUN_EVENT_LOOP: "ON",

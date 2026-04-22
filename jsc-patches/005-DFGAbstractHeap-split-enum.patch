@@ -1,0 +1,53 @@
+# Patch: Expose AbstractHeapKind enum unconditionally (DFG-independent DOMJIT needs it)
+#
+# DFGAbstractHeap.h is fully inside `#if ENABLE(DFG_JIT)` — but the
+# `AbstractHeapKind` enum declared there is referenced by DOMJITEffect.h,
+# which compiles unconditionally (DOMJIT describes side-effects of native
+# functions independent of JIT tier).
+#
+# When ENABLE_DFG_JIT=OFF (required on ppc64le — no DFG backend), the enum
+# is not defined and DOMJITEffect.h fails:
+#     error: no type named 'AbstractHeapKind' in namespace 'JSC::DFG'
+#
+# The enum is a plain `uint8_t` enum with no DFG dependencies; the heavier
+# `AbstractHeap` CLASS below it DOES depend on DFG types. Fix: split the guard
+# so the enum + its macro list are always visible, and the class stays gated.
+#
+# This affects any build with ENABLE_DFG_JIT=OFF, not just ppc64le.
+
+--- a/Source/JavaScriptCore/dfg/DFGAbstractHeap.h
++++ b/Source/JavaScriptCore/dfg/DFGAbstractHeap.h
+@@ -25,13 +25,9 @@
+ #pragma once
+
+-#if ENABLE(DFG_JIT)
+-
+-#include "DOMJITHeapRange.h"
+-#include "OperandsInlines.h"
+-#include "VirtualRegister.h"
+-#include <wtf/HashMap.h>
+-#include <wtf/PrintStream.h>
++// AbstractHeapKind is referenced by DOMJITEffect.h, which compiles
++// unconditionally. Expose the enum + macro even when DFG_JIT is off.
++// The heavier AbstractHeap class below stays guarded.
+
+ namespace JSC { namespace DFG {
+
+@@ -97,6 +93,16 @@
+     FOR_EACH_ABSTRACT_HEAP_KIND(ABSTRACT_HEAP_DECLARATION)
+ #undef ABSTRACT_HEAP_DECLARATION
+ };
+
++} } // namespace JSC::DFG
++
++#if ENABLE(DFG_JIT)
++
++#include "DOMJITHeapRange.h"
++#include "OperandsInlines.h"
++#include "VirtualRegister.h"
++#include <wtf/HashMap.h>
++#include <wtf/PrintStream.h>
++
++namespace JSC { namespace DFG {
++
+ class AbstractHeap {

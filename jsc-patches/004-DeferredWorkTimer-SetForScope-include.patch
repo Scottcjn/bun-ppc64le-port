@@ -1,0 +1,13 @@
+# Patch: Add missing #include <wtf/SetForScope.h> to DeferredWorkTimer.cpp
+#
+# Same class as 003: DeferredWorkTimer.cpp:145 uses SetForScope directly but
+# relies on transitive include. Fails cleanly on JSCOnly + clang-18 + libc++
+# where the chain isn't present.
+
+--- a/Source/JavaScriptCore/runtime/DeferredWorkTimer.cpp
++++ b/Source/JavaScriptCore/runtime/DeferredWorkTimer.cpp
+@@ -34,6 +34,7 @@
+ #include <wtf/RunLoop.h>
++#include <wtf/SetForScope.h>
+ #include <wtf/Scope.h>
+ #include <wtf/TZoneMallocInlines.h>

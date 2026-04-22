@@ -1,0 +1,19 @@
+# Patch: Add ppc64le CPU target to flags.ts
+#
+# Bun's cpuTargetFlags has entries for darwin+arm64, linux+arm64, windows+arm64,
+# x64+baseline, x64 default. Missing: linux+ppc64le.
+#
+# Target POWER8 — the oldest ppc64le hardware in active use (IBM S822/S824,
+# Raptor Talos II). POWER9/POWER10 are feature-compatible supersets.
+
+--- a/scripts/build/flags.ts
++++ b/scripts/build/flags.ts
+@@ -66,6 +66,11 @@
+     desc: "x64 default: Haswell (2013) — AVX2, BMI2 available",
+   },
++  {
++    flag: ["-mcpu=power8", "-mtune=power8"],
++    when: c => c.linux && c.ppc64le,
++    desc: "ppc64le: target POWER8 (S822/S824, Talos II) — baseline for installed fleet",
++  },
+ ];

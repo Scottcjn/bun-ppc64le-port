@@ -1,0 +1,29 @@
+# Patch: offlineasm cloop.rb emits modern uncheckedDowncast instead of removed jsCast
+#
+# jsCast<T*>() was removed from WebKit's JSCast.h in favor of the WTF generic
+# downcast family (is<>(), dynamicDowncast<>(), downcast<>(), uncheckedDowncast<>()).
+# The only remaining references to jsCast in the tree are comments explaining when
+# NOT to use it (heap finalizer paths).
+#
+# However, offlineasm's cloop.rb still emits jsCast<JSGlobalObject*>(...) in the
+# generated native-function call path (llint_internal/native_func opcode handler),
+# which is compiled into LLIntAssembly.h in C_LOOP mode. This causes:
+#
+#   error: use of undeclared identifier 'jsCast'
+#
+# on every CLOOP build (not just ppc64le) with modern WebKit. The fix mirrors
+# exactly what Interpreter.cpp:1520 and peers already do.
+#
+# Applies to: Source/JavaScriptCore/offlineasm/cloop.rb line 1186
+# Note: this file regenerates LLIntAssembly.h on next build — no binary patch.
+
+--- a/Source/JavaScriptCore/offlineasm/cloop.rb
++++ b/Source/JavaScriptCore/offlineasm/cloop.rb
+@@ -1183,7 +1183,7 @@
+             $asm.putc "cloopStack.setCurrentStackPointer(sp.vp());"
+             $asm.putc "nativeFunc = #{operands[0].clValue(:nativeFunc)};"
+-            $asm.putc "functionReturnValue = JSValue::decode(nativeFunc(jsCast<JSGlobalObject*>(t0.cell()), t1.callFrame()));"
++            $asm.putc "functionReturnValue = JSValue::decode(nativeFunc(uncheckedDowncast<JSGlobalObject>(t0.cell()), t1.callFrame()));"
+             $asm.putc "#if USE(JSVALUE32_64)"
+             $asm.putc "    t1 = functionReturnValue.tag();"
+             $asm.putc "    t0 = functionReturnValue.payload();"

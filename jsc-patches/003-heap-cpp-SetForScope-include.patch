@@ -1,0 +1,17 @@
+# Patch: Add missing #include <wtf/SetForScope.h> to Heap.cpp
+#
+# Heap.cpp:3341 uses SetForScope directly but does not #include <wtf/SetForScope.h>.
+# This works on builds where another header (via unified-sources merging or
+# transitive include order) happens to already pull SetForScope in. It fails
+# cleanly when that chain isn't present — e.g. JSCOnly port + clang-18 + libc++.
+#
+# Direct use deserves a direct include. Low-risk upstreamable hygiene fix.
+
+--- a/Source/JavaScriptCore/heap/Heap.cpp
++++ b/Source/JavaScriptCore/heap/Heap.cpp
+@@ -103,6 +103,7 @@
+ #include <wtf/RAMSize.h>
++#include <wtf/SetForScope.h>
+ #include <wtf/Scope.h>
+ #include <wtf/SimpleStats.h>
+ #include <wtf/SystemTracing.h>
