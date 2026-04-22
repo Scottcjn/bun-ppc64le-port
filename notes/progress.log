@@ -261,3 +261,65 @@ At `~/bun-ppc64le/` (179 MB). Has all 4 Bun-side patches applied.
 ### Cleanup
 Removed `zig-cross/` (zig-bootstrap attempt that failed on stock zig2 stage3).
 Kept `zig-host-x86/zig-powerpc64le-linux-0.16.0.tar.xz` as the working distribution.
+
+## 2026-04-22 (session 3 tail) — Gate 4a investigation
+
+### Bun configure on laptop SUCCEEDED
+
+With local patches:
+- Relaxed LLVM version check `>=20.1.0 <21.1.99` (was `>=21.1.0`)
+- Added `/opt/llvm-21/bin` and `/usr/lib/llvm-20/bin` to LLVM search paths
+- Added ppc64le to Arch type + Config.ppc64le
+- webkit.ts CLOOP overrides on ppc64le
+- flags.ts -mcpu=power8
+
+Laptop (x86, bun 1.3.8, clang-20.1.8):
+```
+$ bun scripts/build.ts --os=linux --arch=ppc64le --configure-only
+[configured] bun-debug
+  target       linux-ppc64le-gnu
+  17 deps, 88 codegen, 131 objects in 202ms
+```
+
+### Gate 4a blocker: NO CROSS-COMPILE INFRASTRUCTURE in Bun
+
+Running ninja on laptop immediately fails:
+```
+clang: error: unsupported option '-mcpu=' for target 'x86_64-pc-linux-gnu'
+```
+
+Bun's cmake args pass `-mcpu=power8` but don't pass `--target=powerpc64le-linux-gnu`
+to clang. Grep confirms: no `cfg.host.arch !== cfg.arch` branches anywhere in
+`scripts/build/`. Bun assumes native build.
+
+### Alternate path attempts
+
+**qemu-user-static + amd64 bun**:
+- Ubuntu 20.04 ships qemu 4.2 (old)
+- glibc bun: `qemu: uncaught target signal 4 (Illegal instruction)` (new x86 instructions)
+- musl bun: needs /lib/ld-musl-x86_64.so.1 which we don't have
+
+**node-fallback via findBun patch**:
+- Returns node path when bun missing
+- Works for configure but MODULE_NOT_FOUND at runtime:
+  `Cannot find module '/mnt/nvme/bun-ppc64le/run'`
+- Bun's codegen scripts use Bun.file/Bun.build — no node equivalent
+
+### Unblocked by: (needs Scott direction)
+
+1. **Cross-compile patch**: Add `--target=powerpc64le-linux-gnu` to Bun's
+   cmake args when host != target. Maybe 20-50 LOC in source.ts / flags.ts.
+2. **Newer qemu on POWER8**: Build qemu 7+ from source (a couple hours).
+3. **jsc-runner micro-runtime**: Bypass Bun, build minimal C++ runtime directly
+   against our /opt/bun-webkit-ppc64le libJSC.a (~1-2 weeks, Option C).
+4. **Run codegen headlessly on laptop bun + rsync outputs**: Force ninja
+   targets up through codegen, package build/debug/codegen/ + vendor/*/
+   artifacts, rsync to POWER8, run remaining compile+link there. May still
+   hit per-arch codegen bits.
+
+### What we have NOW
+
+- Complete working toolchain on POWER8 (clang-21, zig-0.16.0, ICU-72, libJSC)
+- Release tarballs on GitHub v0.1.0 (643 MB total)
+- Patches ready to extract as upstream PRs to WebKit + Bun
+- JSC runs full ES2022+ on POWER8 directly
