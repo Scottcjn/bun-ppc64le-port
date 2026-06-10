@@ -1,3 +1,5 @@
+[![BCOS Certified](https://img.shields.io/badge/BCOS-Certified-brightgreen?style=flat)](BCOS.md)
+
 # bun-ppc64le-port
 
 Porting [Bun](https://github.com/oven-sh/bun) and [WebKit/JavaScriptCore](https://github.com/oven-sh/WebKit) to **ppc64le** (IBM POWER8+ Linux).

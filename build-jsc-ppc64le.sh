@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
 # Reproducible build: oven-sh/WebKit JSC on ppc64le with all Bun flags.
 #
 # Requires (on Ubuntu 20.04 ppc64el host):
